@@ -1,8 +1,12 @@
 <?php
+
 namespace SimpleSAML\Utils;
 
-use SimpleSAML\Module;
+use SimpleSAML\Configuration;
 use SimpleSAML\Logger;
+use SimpleSAML\Module;
+use SimpleSAML\Session;
+use SimpleSAML\Error;
 
 /**
  * HTTP-related utility methods.
@@ -11,26 +15,33 @@ use SimpleSAML\Logger;
  */
 class HTTP
 {
-
     /**
      * Obtain a URL where we can redirect to securely post a form with the given data to a specific destination.
      *
      * @param string $destination The destination URL.
      * @param array  $data An associative array containing the data to be posted to $destination.
      *
+     * @throws Error\Exception If the current session is transient.
      * @return string  A URL which allows to securely post a form to $destination.
      *
      * @author Jaime Perez, UNINETT AS <jaime.perez@uninett.no>
      */
     private static function getSecurePOSTRedirectURL($destination, $data)
     {
-        $session = \SimpleSAML_Session::getSessionFromRequest();
+        $session = Session::getSessionFromRequest();
         $id = self::savePOSTData($session, $destination, $data);
 
-        // encrypt the session ID and the random ID
-        $info = base64_encode(Crypto::aesEncrypt($session->getSessionId().':'.$id));
+        // get the session ID
+        $session_id = $session->getSessionId();
+        if (is_null($session_id)) {
+            // this is a transient session, it is pointless to continue
+            throw new Error\Exception('Cannot save POST data to a transient session.');
+        }
 
-        $url = Module::getModuleURL('core/postredirect.php', array('RedirInfo' => $info));
+        // encrypt the session ID and the random ID
+        $info = base64_encode(Crypto::aesEncrypt($session_id.':'.$id));
+
+        $url = Module::getModuleURL('core/postredirect.php', ['RedirInfo' => $info]);
         return preg_replace('#^https:#', 'http:', $url);
     }
 
@@ -60,7 +71,7 @@ class HTTP
             if (!is_numeric($port)) {
                 array_push($decomposed, $port);
             }
-            $current = implode($decomposed, ":");
+            $current = implode(":", $decomposed);
         }
         return $current;
     }
@@ -73,7 +84,7 @@ class HTTP
      *
      * @author Olav Morken, UNINETT AS <olav.morken@uninett.no>
      */
-    private static function getServerHTTPS()
+    public static function getServerHTTPS()
     {
         if (!array_key_exists('HTTPS', $_SERVER)) {
             // not an https-request
@@ -85,8 +96,8 @@ class HTTP
             return false;
         }
 
-        // otherwise, HTTPS will be a non-empty string
-        return $_SERVER['HTTPS'] !== '';
+        // otherwise, HTTPS will be non-empty
+        return !empty($_SERVER['HTTPS']);
     }
 
 
@@ -98,17 +109,16 @@ class HTTP
      *
      * @author Olav Morken, UNINETT AS <olav.morken@uninett.no>
      */
-    private static function getServerPort()
+    public static function getServerPort()
     {
-        $port = (isset($_SERVER['SERVER_PORT'])) ? $_SERVER['SERVER_PORT'] : '80';
-        if (self::getServerHTTPS()) {
-            if ($port !== '443') {
-                return ':'.$port;
-            }
-        } else {
-            if ($port !== '80') {
-                return ':'.$port;
-            }
+        $default_port = self::getServerHTTPS() ? '443' : '80';
+        $port = isset($_SERVER['SERVER_PORT']) ? $_SERVER['SERVER_PORT'] : $default_port;
+
+        // Take care of edge-case where SERVER_PORT is an integer
+        $port = strval($port);
+        
+        if ($port !== $default_port) {
+            return ':'.$port;
         }
         return '';
     }
@@ -137,7 +147,7 @@ class HTTP
      * @author Mads Freek Petersen
      * @author Jaime Perez, UNINETT AS <jaime.perez@uninett.no>
      */
-    private static function redirect($url, $parameters = array())
+    private static function redirect($url, $parameters = [])
     {
         if (!is_string($url) || empty($url) || !is_array($parameters)) {
             throw new \InvalidArgumentException('Invalid input parameters.');
@@ -168,7 +178,7 @@ class HTTP
 
             // disable caching of this response
             header('Pragma: no-cache');
-            header('Cache-Control: no-cache, must-revalidate');
+            header('Cache-Control: no-cache, no-store, must-revalidate');
         }
 
         // show a minimal web page with a clickable link to the URL
@@ -178,9 +188,10 @@ class HTTP
         echo '<html xmlns="http://www.w3.org/1999/xhtml">'."\n";
         echo "  <head>\n";
         echo '    <meta http-equiv="content-type" content="text/html; charset=utf-8">'."\n";
+        echo '    <meta http-equiv="refresh" content="0;URL=\''.htmlspecialchars($url).'\'">'."\n";
         echo "    <title>Redirect</title>\n";
         echo "  </head>\n";
-        echo "  <body onload=\"window.location.replace('".htmlspecialchars($url)."');\">\n";
+        echo "  <body>\n";
         echo "    <h1>Redirect</h1>\n";
         echo '      <p>You were redirected to: <a id="redirlink" href="'.htmlspecialchars($url).'">';
         echo htmlspecialchars($url)."</a>\n";
@@ -197,7 +208,7 @@ class HTTP
     /**
      * Save the given HTTP POST data and the destination where it should be posted to a given session.
      *
-     * @param \SimpleSAML_Session $session The session where to temporarily store the data.
+     * @param \SimpleSAML\Session $session The session where to temporarily store the data.
      * @param string              $destination The destination URL where the form should be posted.
      * @param array               $data An associative array with the data to be posted to $destination.
      *
@@ -206,14 +217,14 @@ class HTTP
      * @author Andjelko Horvat
      * @author Jaime Perez, UNINETT AS <jaime.perez@uninett.no>
      */
-    private static function savePOSTData(\SimpleSAML_Session $session, $destination, $data)
+    private static function savePOSTData(Session $session, $destination, $data)
     {
         // generate a random ID to avoid replay attacks
         $id = Random::generateID();
-        $postData = array(
+        $postData = [
             'post' => $data,
             'url'  => $destination,
-        );
+        ];
 
         // save the post data to the session, tied to the random ID
         $session->setData('core_postdatalink', $id, $postData);
@@ -243,18 +254,20 @@ class HTTP
 
         $queryStart = strpos($url, '?');
         if ($queryStart === false) {
-            $oldQuery = array();
+            $oldQuery = [];
             $url .= '?';
         } else {
+            /** @var string|false $oldQuery */
             $oldQuery = substr($url, $queryStart + 1);
             if ($oldQuery === false) {
-                $oldQuery = array();
+                $oldQuery = [];
             } else {
                 $oldQuery = self::parseQueryString($oldQuery);
             }
             $url = substr($url, 0, $queryStart + 1);
         }
 
+        /** @var array $oldQuery */
         $query = array_merge($oldQuery, $parameters);
         $url .= http_build_query($query, '', '&');
 
@@ -265,7 +278,7 @@ class HTTP
     /**
      * Check for session cookie, and show missing-cookie page if it is missing.
      *
-     * @param string|NULL $retryURL The URL the user should access to retry the operation. Defaults to null.
+     * @param string|null $retryURL The URL the user should access to retry the operation. Defaults to null.
      *
      * @return void If there is a session cookie, nothing will be returned. Otherwise, the user will be redirected to a
      *     page telling about the missing cookie.
@@ -275,11 +288,11 @@ class HTTP
      */
     public static function checkSessionCookie($retryURL = null)
     {
-        if (!is_string($retryURL) && !is_null($retryURL)) {
+        if (!is_null($retryURL) && !is_string($retryURL)) {
             throw new \InvalidArgumentException('Invalid input parameters.');
         }
 
-        $session = \SimpleSAML_Session::getSessionFromRequest();
+        $session = Session::getSessionFromRequest();
         if ($session->hasSessionCookie()) {
             return;
         }
@@ -288,7 +301,7 @@ class HTTP
 
         $url = Module::getModuleURL('core/no_cookie.php');
         if ($retryURL !== null) {
-            $url = self::addURLParameters($url, array('retryURL' => $retryURL));
+            $url = self::addURLParameters($url, ['retryURL' => $retryURL]);
         }
         self::redirectTrustedURL($url);
     }
@@ -304,7 +317,7 @@ class HTTP
      * @return string The normalized URL itself if it is allowed. An empty string if the $url parameter is empty as
      * defined by the empty() function.
      * @throws \InvalidArgumentException If the URL is malformed.
-     * @throws \SimpleSAML_Error_Exception If the URL is not allowed by configuration.
+     * @throws Error\Exception If the URL is not allowed by configuration.
      *
      * @author Jaime Perez, UNINETT AS <jaime.perez@uninett.no>
      */
@@ -315,27 +328,38 @@ class HTTP
         }
         $url = self::normalizeURL($url);
 
+        if (filter_var($url, FILTER_VALIDATE_URL) === false) {
+            throw new Error\Exception('Invalid URL: '.$url);
+        }
+
         // get the white list of domains
         if ($trustedSites === null) {
-            $trustedSites = \SimpleSAML_Configuration::getInstance()->getValue('trusted.url.domains', array());
+            $trustedSites = Configuration::getInstance()->getValue('trusted.url.domains', []);
         }
 
         // validates the URL's host is among those allowed
         if (is_array($trustedSites)) {
-            assert(is_array($trustedSites));
-            preg_match('@^http(s?)://([^/:]+)((?::\d+)?)@i', $url, $matches);
-            $hostname = $matches[2];
+            $components = parse_url($url);
+            $hostname = $components['host'];
+
+            // check for userinfo
+            if ((isset($components['user']) && strpos($components['user'], '\\') !== false) ||
+                (isset($components['pass']) && strpos($components['pass'], '\\') !== false)
+            ) {
+                throw new Error\Exception('Invalid URL: '.$url);
+            }
 
             // allow URLs with standard ports specified (non-standard ports must then be allowed explicitly)
-            if (!empty($matches[3]) &&
-                (($matches[1] === '' && $matches[3] !== ':80') || ($matches[1]) === 's' && $matches[3] !== ':443')
+            if (isset($components['port']) &&
+                (($components['scheme'] === 'http' && $components['port'] !== 80) ||
+                 ($components['scheme'] === 'https' && $components['port'] !== 443))
             ) {
-                $hostname = $hostname.$matches[3];
+                $hostname = $hostname.':'.$components['port'];
             }
 
             $self_host = self::getSelfHostWithNonStandardPort();
 
-            $trustedRegex = \SimpleSAML_Configuration::getInstance()->getValue('trusted.url.regex', false);
+            $trustedRegex = Configuration::getInstance()->getValue('trusted.url.regex', false);
 
             $trusted = false;
             if ($trustedRegex) {
@@ -352,12 +376,12 @@ class HTTP
             } else {
                 // add self host to the white list
                 $trustedSites[] = $self_host;
-                $trusted = in_array($hostname, $trustedSites);
+                $trusted = in_array($hostname, $trustedSites, true);
             }
 
             // throw exception due to redirection to untrusted site
             if (!$trusted) {
-                throw new \SimpleSAML_Error_Exception('URL not allowed: '.$url);
+                throw new Error\Exception('URL not allowed: '.$url);
             }
         }
         return $url;
@@ -374,21 +398,22 @@ class HTTP
      * @param array   $context Extra context options. This parameter is optional.
      * @param boolean $getHeaders Whether to also return response headers. Optional.
      *
-     * @return mixed array if $getHeaders is set, string otherwise
+     * @return string|array An array if $getHeaders is set, containing the data and the headers respectively; string
+     *  otherwise.
      * @throws \InvalidArgumentException If the input parameters are invalid.
-     * @throws \SimpleSAML_Error_Exception If the file or URL cannot be retrieved.
+     * @throws Error\Exception If the file or URL cannot be retrieved.
      *
      * @author Andjelko Horvat
      * @author Olav Morken, UNINETT AS <olav.morken@uninett.no>
      * @author Marco Ferrante, University of Genova <marco@csita.unige.it>
      */
-    public static function fetch($url, $context = array(), $getHeaders = false)
+    public static function fetch($url, $context = [], $getHeaders = false)
     {
         if (!is_string($url)) {
             throw new \InvalidArgumentException('Invalid input parameters.');
         }
 
-        $config = \SimpleSAML_Configuration::getInstance();
+        $config = Configuration::getInstance();
 
         $proxy = $config->getString('proxy', null);
         if ($proxy !== null) {
@@ -397,7 +422,7 @@ class HTTP
             }
             $proxy_auth = $config->getString('proxy.auth', false);
             if ($proxy_auth !== false) {
-                $context['http']['header'] = "Proxy-Authorization: Basic".base64_encode($proxy_auth);
+                $context['http']['header'] = "Proxy-Authorization: Basic ".base64_encode($proxy_auth);
             }
             if (!isset($context['http']['request_fulluri'])) {
                 $context['http']['request_fulluri'] = true;
@@ -417,10 +442,10 @@ class HTTP
                 // extract the hostname
                 $hostname = parse_url($url, PHP_URL_HOST);
                 if (!empty($hostname)) {
-                    $context['ssl'] = array(
+                    $context['ssl'] = [
                         'SNI_server_name' => $hostname,
                         'SNI_enabled'     => true,
-                    );
+                    ];
                 } else {
                     Logger::warning('Invalid URL format or local URL used through a proxy');
                 }
@@ -428,19 +453,28 @@ class HTTP
         }
 
         $context = stream_context_create($context);
-        $data = file_get_contents($url, false, $context);
+        $data = @file_get_contents($url, false, $context);
         if ($data === false) {
             $error = error_get_last();
-            throw new \SimpleSAML_Error_Exception('Error fetching '.var_export($url, true).':'.$error['message']);
+            throw new Error\Exception('Error fetching '.var_export($url, true).':'.
+                (is_array($error) ? $error['message'] : 'no error available'));
         }
 
         // data and headers
         if ($getHeaders) {
-            if (isset($http_response_header)) {
-                $headers = array();
+            /**
+             * Remove for Psalm >=3.0.17
+             * @psalm-suppress UndefinedVariable
+             */
+            if (!empty($http_response_header)) {
+                $headers = [];
+                /**
+                 * Remove for Psalm >=3.0.17
+                 * @psalm-suppress UndefinedVariable
+                 */
                 foreach ($http_response_header as $h) {
                     if (preg_match('@^HTTP/1\.[01]\s+\d{3}\s+@', $h)) {
-                        $headers = array(); // reset
+                        $headers = []; // reset
                         $headers[0] = $h;
                         continue;
                     }
@@ -453,7 +487,7 @@ class HTTP
                 // no HTTP headers, probably a different protocol, e.g. file
                 $headers = null;
             }
-            return array($data, $headers);
+            return [$data, $headers];
         }
 
         return $data;
@@ -475,12 +509,12 @@ class HTTP
     {
         if (!array_key_exists('HTTP_ACCEPT_LANGUAGE', $_SERVER)) {
             // no Accept-Language header, return an empty set
-            return array();
+            return [];
         }
 
         $languages = explode(',', strtolower($_SERVER['HTTP_ACCEPT_LANGUAGE']));
 
-        $ret = array();
+        $ret = [];
 
         foreach ($languages as $l) {
             $opts = explode(';', $l);
@@ -572,14 +606,13 @@ class HTTP
      */
     public static function getBaseURL()
     {
-        $globalConfig = \SimpleSAML_Configuration::getInstance();
+        $globalConfig = Configuration::getInstance();
         $baseURL = $globalConfig->getString('baseurlpath', 'simplesaml/');
 
         if (preg_match('#^https?://.*/?$#D', $baseURL, $matches)) {
             // full URL in baseurlpath, override local server values
             return rtrim($baseURL, '/').'/';
-        } elseif (
-            (preg_match('#^/?([^/]?.*/)$#D', $baseURL, $matches)) ||
+        } elseif ((preg_match('#^/?([^/]?.*/)$#D', $baseURL, $matches)) ||
             (preg_match('#^\*(.*)/$#D', $baseURL, $matches)) ||
             ($baseURL === '')
         ) {
@@ -613,16 +646,16 @@ class HTTP
     /**
      * Retrieve the first element of the URL path.
      *
-     * @param boolean $trailingslash Whether to add a trailing slash to the element or not. Defaults to true.
+     * @param boolean $leadingSlash Whether to add a leading slash to the element or not. Defaults to true.
      *
-     * @return string The first element of the URL path, with an optional, trailing slash.
+     * @return string The first element of the URL path, with an optional, leading slash.
      *
      * @author Andreas Solberg, UNINETT AS <andreas.solberg@uninett.no>
      */
-    public static function getFirstPathElement($trailingslash = true)
+    public static function getFirstPathElement($leadingSlash = true)
     {
         if (preg_match('|^/(.*?)/|', $_SERVER['SCRIPT_NAME'], $matches)) {
-            return ($trailingslash ? '/' : '').$matches[1];
+            return ($leadingSlash ? '/' : '').$matches[1];
         }
         return '';
     }
@@ -646,16 +679,17 @@ class HTTP
             throw new \InvalidArgumentException('Invalid input parameters.');
         }
 
-        $config = \SimpleSAML_Configuration::getInstance();
+        $config = Configuration::getInstance();
         $allowed = $config->getBoolean('enable.http_post', false);
 
         if ($allowed && preg_match("#^http:#", $destination) && self::isHTTPS()) {
             // we need to post the data to HTTP
             $url = self::getSecurePOSTRedirectURL($destination, $data);
-        } else { // post the data directly
-            $session = \SimpleSAML_Session::getSessionFromRequest();
+        } else {
+            // post the data directly
+            $session = Session::getSessionFromRequest();
             $id = self::savePOSTData($session, $destination, $data);
-            $url = Module::getModuleURL('core/postredirect.php', array('RedirId' => $id));
+            $url = Module::getModuleURL('core/postredirect.php', ['RedirId' => $id]);
         }
 
         return $url;
@@ -693,7 +727,9 @@ class HTTP
     {
         $url = self::getBaseURL();
 
-        $start = strpos($url, '://') + 3;
+        /** @var int $colon getBaseURL() will allways return a valid URL */
+        $colon = strpos($url, '://');
+        $start = $colon + 3;
         $length = strcspn($url, '/', $start);
 
         return substr($url, $start, $length);
@@ -734,9 +770,11 @@ class HTTP
      */
     public static function getSelfURL()
     {
-        $cfg = \SimpleSAML_Configuration::getInstance();
+        $cfg = Configuration::getInstance();
         $baseDir = $cfg->getBaseDir();
         $cur_path = realpath($_SERVER['SCRIPT_FILENAME']);
+        // make sure we got a string from realpath()
+        $cur_path = is_string($cur_path) ? $cur_path : '';
         // find the path to the current script relative to the www/ directory of SimpleSAMLphp
         $rel_path = str_replace($baseDir.'www'.DIRECTORY_SEPARATOR, '', $cur_path);
         // convert that relative path to an HTTP query
@@ -759,18 +797,29 @@ class HTTP
              *   directory of SimpleSAMLphp, the URI does not contain its relative path, and $uri_pos is false.
              *
              * It doesn't matter which one of those cases we have. We just know we can't apply our base URL to the
-             * current URI, so we need to build it back from the PHP environment.
+             * current URI, so we need to build it back from the PHP environment, unless we have a base URL specified
+             * for this case in the configuration. First, check if that's the case.
              */
-            $protocol = 'http';
-            $protocol .= (self::getServerHTTPS()) ? 's' : '';
-            $protocol .= '://';
 
-            $hostname = self::getServerHost();
-            $port = self::getServerPort();
-            return $protocol.$hostname.$port.$_SERVER['REQUEST_URI'];
+            /** @var \SimpleSAML\Configuration $appcfg */
+            $appcfg = $cfg->getConfigItem('application', null);
+            $appurl = ($appcfg instanceof Configuration) ? $appcfg->getString('baseURL', '') : '';
+            if (!empty($appurl)) {
+                $protocol = parse_url($appurl, PHP_URL_SCHEME);
+                $hostname = parse_url($appurl, PHP_URL_HOST);
+                $port = parse_url($appurl, PHP_URL_PORT);
+                $port = !empty($port) ? ':'.$port : '';
+            } else {
+                // no base URL specified for app, just use the current URL
+                $protocol = 'http';
+                $protocol .= (self::getServerHTTPS()) ? 's' : '';
+                $hostname = self::getServerHost();
+                $port = self::getServerPort();
+            }
+            return $protocol.'://'.$hostname.$port.$_SERVER['REQUEST_URI'];
         }
 
-        return self::getBaseURL().$rel_path.substr($_SERVER['REQUEST_URI'], $uri_pos + strlen($url_path));
+        return self::getBaseURL().$url_path.substr($_SERVER['REQUEST_URI'], $uri_pos + strlen($url_path));
     }
 
 
@@ -786,7 +835,10 @@ class HTTP
     public static function getSelfURLHost()
     {
         $url = self::getSelfURL();
-        $start = strpos($url, '://') + 3;
+
+        /** @var int $colon getBaseURL() will allways return a valid URL */
+        $colon = strpos($url, '://');
+        $start = $colon + 3;
         $length = strcspn($url, '/', $start) + $start;
         return substr($url, 0, $length);
     }
@@ -875,7 +927,7 @@ class HTTP
             throw new \InvalidArgumentException('Invalid input parameters.');
         }
 
-        $res = array();
+        $res = [];
         if (empty($query_string)) {
             return $res;
         }
@@ -916,7 +968,7 @@ class HTTP
      *
      * @author Jaime Perez, UNINETT AS <jaime.perez@uninett.no>
      */
-    public static function redirectTrustedURL($url, $parameters = array())
+    public static function redirectTrustedURL($url, $parameters = [])
     {
         if (!is_string($url) || !is_array($parameters)) {
             throw new \InvalidArgumentException('Invalid input parameters.');
@@ -929,7 +981,7 @@ class HTTP
 
     /**
      * This function redirects to the specified URL after performing the appropriate security checks on it.
-     * Particularly, it will make sure that the provided URL is allowed by the 'redirect.trustedsites' directive in the
+     * Particularly, it will make sure that the provided URL is allowed by the 'trusted.url.domains' directive in the
      * configuration.
      *
      * If the aforementioned option is not set or the URL does correspond to a trusted site, it performs a redirection
@@ -948,7 +1000,7 @@ class HTTP
      *
      * @author Jaime Perez, UNINETT AS <jaime.perez@uninett.no>
      */
-    public static function redirectUntrustedURL($url, $parameters = array())
+    public static function redirectUntrustedURL($url, $parameters = [])
     {
         if (!is_string($url) || !is_array($parameters)) {
             throw new \InvalidArgumentException('Invalid input parameters.');
@@ -1056,6 +1108,8 @@ class HTTP
      * @throws \InvalidArgumentException If any parameter has an incorrect type.
      * @throws \SimpleSAML\Error\CannotSetCookie If the headers were already sent and the cookie cannot be set.
      *
+     * @return void
+     *
      * @author Andjelko Horvat
      * @author Jaime Perez, UNINETT AS <jaime.perez@uninett.no>
      */
@@ -1069,7 +1123,7 @@ class HTTP
             throw new \InvalidArgumentException('Invalid input parameters.');
         }
 
-        $default_params = array(
+        $default_params = [
             'lifetime' => 0,
             'expire'   => null,
             'path'     => '/',
@@ -1077,7 +1131,7 @@ class HTTP
             'secure'   => false,
             'httponly' => true,
             'raw'      => false,
-        );
+        ];
 
         if ($params !== null) {
             $params = array_merge($default_params, $params);
@@ -1100,17 +1154,17 @@ class HTTP
         if ($value === null) {
             $expire = time() - 365 * 24 * 60 * 60;
         } elseif (isset($params['expire'])) {
-            $expire = $params['expire'];
+            $expire = intval($params['expire']);
         } elseif ($params['lifetime'] === 0) {
             $expire = 0;
         } else {
-            $expire = time() + $params['lifetime'];
+            $expire = time() + intval($params['lifetime']);
         }
 
         if ($params['raw']) {
             $success = @setrawcookie(
                 $name,
-                $value,
+                strval($value),
                 $expire,
                 $params['path'],
                 $params['domain'],
@@ -1120,7 +1174,7 @@ class HTTP
         } else {
             $success = @setcookie(
                 $name,
-                $value,
+                strval($value),
                 $expire,
                 $params['path'],
                 $params['domain'],
@@ -1151,6 +1205,8 @@ class HTTP
      *
      * @throws \InvalidArgumentException If $destination is not a string or $data is not an array.
      *
+     * @return void
+     *
      * @author Olav Morken, UNINETT AS <olav.morken@uninett.no>
      * @author Andjelko Horvat
      * @author Jaime Perez, UNINETT AS <jaime.perez@uninett.no>
@@ -1161,7 +1217,7 @@ class HTTP
             throw new \InvalidArgumentException('Invalid input parameters.');
         }
 
-        $config = \SimpleSAML_Configuration::getInstance();
+        $config = Configuration::getInstance();
         $allowed = $config->getBoolean('enable.http_post', false);
 
         if ($allowed && preg_match("#^http:#", $destination) && self::isHTTPS()) {
@@ -1169,7 +1225,7 @@ class HTTP
             self::redirect(self::getSecurePOSTRedirectURL($destination, $data));
         }
 
-        $p = new \SimpleSAML_XHTML_Template($config, 'post.php');
+        $p = new \SimpleSAML\XHTML\Template($config, 'post.php');
         $p->data['destination'] = $destination;
         $p->data['post'] = $data;
         $p->show();

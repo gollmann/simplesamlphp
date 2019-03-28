@@ -1,116 +1,180 @@
 <?php
+
+namespace SimpleSAML\Module\statistics\Statistics\Rulesets;
+
 /*
  * @author Andreas Åkre Solberg <andreas.solberg@uninett.no>
  * @package SimpleSAMLphp
  */
-class sspmod_statistics_Statistics_Rulesets_BaseRule {
+class BaseRule
+{
+    /** @var \SimpleSAML\Configuration */
+    protected $statconfig;
 
-	protected $statconfig;
-	protected $ruleconfig;
-	protected $ruleid;
-	protected $available;
+    /** @var \SimpleSAML\Configuration */
+    protected $ruleconfig;
 
-	/**
-	 * Constructor
-	 */
-	public function __construct($statconfig, $ruleconfig, $ruleid, $available) {
-		assert('$statconfig instanceof SimpleSAML_Configuration');
-		assert('$ruleconfig instanceof SimpleSAML_Configuration');
-		$this->statconfig = $statconfig;
-		$this->ruleconfig = $ruleconfig;
-		$this->ruleid = $ruleid;
-		
-		$this->available = NULL;
-		if (array_key_exists($ruleid, $available)) $this->available = $available[$ruleid];	
-	}
-	
-	public function getRuleID() {
-		return $this->ruleid;
-	}
-	
-	public function init() {
+    /** @var string */
+    protected $ruleid;
 
-	}
-	
-	public function availableTimeRes() {
-		$timeresConfigs = $this->statconfig->getValue('timeres');
-		$available_times = array(); 
-		foreach ($timeresConfigs AS $tres => $tresconfig) {
-			if (array_key_exists($tres, $this->available))
-				$available_times[$tres] = $tresconfig['name'];
-		}
-		return $available_times;
-	}
+    /** @var array|null */
+    protected $available = null;
 
-	
-	public function availableFileSlots($timeres) {
-		$timeresConfigs = $this->statconfig->getValue('timeres');
-		$timeresConfig = $timeresConfigs[$timeres];
-		
-		if (isset($timeresConfig['customDateHandler']) && $timeresConfig['customDateHandler'] == 'month') {
-			$datehandler = new sspmod_statistics_DateHandlerMonth(0);
-		} else {
-			$datehandler = new sspmod_statistics_DateHandler($this->statconfig->getValue('offset', 0));
-		}
-		
-		
-		/*
-		 * Get list of avaiable times in current file (rule)
-		 */
-		$available_times = array(); 
-		foreach ($this->available[$timeres] AS $slot) {
-			$available_times[$slot] = $datehandler->prettyHeader($slot, $slot+1, $timeresConfig['fileslot'], $timeresConfig['dateformat-period']);
-		}
-		return $available_times;
-	}
+    /**
+     * Constructor
+     *
+     * @param \SimpleSAML\Configuration $statconfig
+     * @param \SimpleSAML\Configuration $ruleconfig
+     * @param string $ruleid
+     * @param array $available
+     */
+    public function __construct($statconfig, $ruleconfig, $ruleid, $available)
+    {
+        assert($statconfig instanceof \SimpleSAML\Configuration);
+        assert($ruleconfig instanceof \SimpleSAML\Configuration);
+        $this->statconfig = $statconfig;
+        $this->ruleconfig = $ruleconfig;
+        $this->ruleid = $ruleid;
 
-	protected function resolveTimeRes($preferTimeRes) {
-		$timeresavailable = array_keys($this->available);
-		$timeres = $timeresavailable[0];
+        if (array_key_exists($ruleid, $available)) {
+            $this->available = $available[$ruleid];
+        }
+    }
 
-		// Then check if the user have provided one that is valid
-		if (in_array($preferTimeRes, $timeresavailable)) {
-			$timeres = $preferTimeRes;
-		}
-		return $timeres;
-	}
-	
-	protected function resolveFileSlot($timeres, $preferTime) {
 
-		// Get which time (fileslot) to use.. First get a default, which is the most recent one.
-		$fileslot = $this->available[$timeres][count($this->available[$timeres])-1];
-		// Then check if the user have provided one.
-		if (in_array($preferTime, $this->available[$timeres])) {
-			$fileslot = $preferTime;
-		}
-		return $fileslot;
-	}
-	
-	
-	public function getTimeNavigation($timeres, $preferTime) {
-		$fileslot = $this->resolveFileSlot($timeres, $preferTime);
-		
-		// Extract previous and next time slots...
-		$available_times_prev = NULL; $available_times_next = NULL;
+    /**
+     * @return string
+     */
+    public function getRuleID()
+    {
+        return $this->ruleid;
+    }
 
-		$timeslots = array_values($this->available[$timeres]);
-		sort($timeslots, SORT_NUMERIC);
-		$timeslotindex = array_flip($timeslots);
 
-		if ($timeslotindex[$fileslot] > 0) 
-			$available_times_prev = $timeslots[$timeslotindex[$fileslot]-1];
-		if ($timeslotindex[$fileslot] < (count($timeslotindex)-1) ) 
-			$available_times_next = $timeslots[$timeslotindex[$fileslot]+1];
-		return array('prev' => $available_times_prev, 'next' => $available_times_next);
-	}
-	
-	public function getDataSet($preferTimeRes, $preferTime) {
-		$timeres = $this->resolveTimeRes($preferTimeRes);
-		$fileslot = $this->resolveFileSlot($timeres, $preferTime);
-		$dataset = new sspmod_statistics_StatDataset($this->statconfig, $this->ruleconfig, $this->ruleid, $timeres, $fileslot);
-		return $dataset;
-	}
-	
+    /**
+     * @return array
+     */
+    public function availableTimeRes()
+    {
+        $timeresConfigs = $this->statconfig->getValue('timeres');
+        $available_times = [];
+        foreach ($timeresConfigs as $tres => $tresconfig) {
+            if (array_key_exists($tres, $this->available)) {
+                $available_times[$tres] = $tresconfig['name'];
+            }
+        }
+        return $available_times;
+    }
 
+
+    /**
+     * @param string $timeres
+     * @return array
+     */
+    public function availableFileSlots($timeres)
+    {
+        $timeresConfigs = $this->statconfig->getValue('timeres');
+        $timeresConfig = $timeresConfigs[$timeres];
+
+        if (isset($timeresConfig['customDateHandler']) && $timeresConfig['customDateHandler'] == 'month') {
+            $datehandler = new \SimpleSAML\Module\statistics\DateHandlerMonth(0);
+        } else {
+            $datehandler = new \SimpleSAML\Module\statistics\DateHandler($this->statconfig->getValue('offset', 0));
+        }
+
+        /*
+         * Get list of avaiable times in current file (rule)
+         */
+        $available_times = [];
+        foreach ($this->available[$timeres] as $slot) {
+            $available_times[$slot] = $datehandler->prettyHeader(
+                $slot,
+                $slot + 1,
+                $timeresConfig['fileslot'],
+                $timeresConfig['dateformat-period']
+            );
+        }
+        return $available_times;
+    }
+
+
+    /**
+     * @param string $preferTimeRes
+     * @return string
+     */
+    protected function resolveTimeRes($preferTimeRes)
+    {
+        $timeresavailable = array_keys($this->available);
+        $timeres = $timeresavailable[0];
+
+        // Then check if the user have provided one that is valid
+        if (in_array($preferTimeRes, $timeresavailable, true)) {
+            $timeres = $preferTimeRes;
+        }
+        return $timeres;
+    }
+
+
+    /**
+     * @param string $timeres
+     * @param string $preferTime
+     * @return int
+     */
+    protected function resolveFileSlot($timeres, $preferTime)
+    {
+        // Get which time (fileslot) to use.. First get a default, which is the most recent one.
+        $fileslot = $this->available[$timeres][count($this->available[$timeres]) - 1];
+        // Then check if the user have provided one.
+        if (in_array($preferTime, $this->available[$timeres], true)) {
+            $fileslot = $preferTime;
+        }
+        return $fileslot;
+    }
+
+
+    /**
+     * @param string $timeres
+     * @param string $preferTime
+     * @return array
+     */
+    public function getTimeNavigation($timeres, $preferTime)
+    {
+        $fileslot = $this->resolveFileSlot($timeres, $preferTime);
+
+        // Extract previous and next time slots...
+        $available_times_prev = null;
+        $available_times_next = null;
+
+        $timeslots = array_values($this->available[$timeres]);
+        sort($timeslots, SORT_NUMERIC);
+        $timeslotindex = array_flip($timeslots);
+
+        if ($timeslotindex[$fileslot] > 0) {
+            $available_times_prev = $timeslots[$timeslotindex[$fileslot] - 1];
+        }
+        if ($timeslotindex[$fileslot] < (count($timeslotindex) - 1)) {
+            $available_times_next = $timeslots[$timeslotindex[$fileslot] + 1];
+        }
+        return ['prev' => $available_times_prev, 'next' => $available_times_next];
+    }
+
+
+    /**
+     * @param string $preferTimeRes
+     * @param string $preferTime
+     * @return \SimpleSAML\Module\statistics\StatDataset
+     */
+    public function getDataSet($preferTimeRes, $preferTime)
+    {
+        $timeres = $this->resolveTimeRes($preferTimeRes);
+        $fileslot = $this->resolveFileSlot($timeres, $preferTime);
+        $dataset = new \SimpleSAML\Module\statistics\StatDataset(
+            $this->statconfig,
+            $this->ruleconfig,
+            $this->ruleid,
+            $timeres,
+            $fileslot
+        );
+        return $dataset;
+    }
 }
-

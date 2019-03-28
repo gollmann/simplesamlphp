@@ -18,7 +18,7 @@ License:   %{license}
 Group:     %{group}
 Source0:   %{source}
 BuildArch: noarch
-Requires:  httpd, mod_ssl, mod_php, php-ldap, php-mcrypt, php-xml, policycoreutils-python
+Requires:  httpd, mod_ssl, mod_php, php-ldap, php-xml, policycoreutils-python
 Requires(pre): shadow-utils
 Provides:  %{name}
 URL:       %{url}
@@ -70,7 +70,6 @@ tar cf - . | (cd %{buildroot}%{_prefix}simplesamlphp; tar xfp -)
 /var/lib/simplesamlphp/
 %dir %attr(0750, root,apache) /var/lib/simplesamlphp/config
 %config(noreplace) %attr(0640, root,apache) /var/lib/simplesamlphp/config/acl.php
-%config(noreplace) %attr(0640, root,apache) /var/lib/simplesamlphp/config/authmemcookie.php
 %config(noreplace) %attr(0640, root,apache) /var/lib/simplesamlphp/config/authsources.php
 %config(noreplace) %attr(0640, root,apache) /var/lib/simplesamlphp/config/config.php
 %dir %attr(0750, root,apache) /var/lib/simplesamlphp/metadata

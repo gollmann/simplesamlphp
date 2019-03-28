@@ -13,14 +13,18 @@ use SimpleSAML\Utils\System;
  */
 class SyslogLoggingHandler implements LoggingHandlerInterface
 {
+    /** @var bool */
     private $isWindows = false;
-    private $format;
+
+    /** @var string */
+    protected $format = "%b %d %H:%M:%S";
 
 
     /**
      * Build a new logging handler based on syslog.
+     * @param \SimpleSAML\Configuration $config
      */
-    public function __construct(\SimpleSAML_Configuration $config)
+    public function __construct(\SimpleSAML\Configuration $config)
     {
         $facility = $config->getInteger('logging.facility', defined('LOG_LOCAL5') ? constant('LOG_LOCAL5') : LOG_USER);
 
@@ -40,6 +44,7 @@ class SyslogLoggingHandler implements LoggingHandlerInterface
      * Set the format desired for the logs.
      *
      * @param string $format The format used for logs.
+     * @return void
      */
     public function setLogFormat($format)
     {
@@ -52,6 +57,7 @@ class SyslogLoggingHandler implements LoggingHandlerInterface
      *
      * @param int $level The log level.
      * @param string $string The formatted message to log.
+     * @return void
      */
     public function log($level, $string)
     {
@@ -64,8 +70,8 @@ class SyslogLoggingHandler implements LoggingHandlerInterface
             }
         }
 
-        $formats = array('%process', '%level');
-        $replacements = array('', $level);
+        $formats = ['%process', '%level'];
+        $replacements = ['', $level];
         $string = str_replace($formats, $replacements, $string);
         $string = preg_replace('/%\w+(\{[^\}]+\})?/', '', $string);
         $string = trim($string);

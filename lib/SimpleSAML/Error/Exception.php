@@ -1,5 +1,6 @@
 <?php
 
+namespace SimpleSAML\Error;
 
 /**
  * Base class for SimpleSAMLphp Exceptions
@@ -9,9 +10,9 @@
  * @author Thomas Graff <thomas.graff@uninett.no>
  * @package SimpleSAMLphp
  */
-class SimpleSAML_Error_Exception extends Exception
-{
 
+class Exception extends \Exception
+{
     /**
      * The backtrace for this exception.
      *
@@ -20,74 +21,72 @@ class SimpleSAML_Error_Exception extends Exception
      *
      * @var array
      */
-    private $backtrace;
+    private $backtrace = [];
 
 
     /**
      * The cause of this exception.
      *
-     * @var SimpleSAML_Error_Exception
+     * @var Exception|null
      */
-    private $cause;
+    private $cause = null;
 
 
     /**
      * Constructor for this error.
      *
-     * Note that the cause will be converted to a SimpleSAML_Error_UnserializableException unless it is a subclass of
-     * SimpleSAML_Error_Exception.
+     * Note that the cause will be converted to a SimpleSAML\Error\UnserializableException unless it is a subclass of
+     * SimpleSAML\Error\Exception.
      *
      * @param string         $message Exception message
      * @param int            $code Error code
-     * @param Exception|null $cause The cause of this exception.
+     * @param \Exception|null $cause The cause of this exception.
      */
-    public function __construct($message, $code = 0, Exception $cause = null)
+    public function __construct($message, $code = 0, \Exception $cause = null)
     {
-        assert('is_string($message)');
-        assert('is_int($code)');
+        assert(is_string($message));
+        assert(is_int($code));
 
         parent::__construct($message, $code);
 
         $this->initBacktrace($this);
 
         if ($cause !== null) {
-            $this->cause = SimpleSAML_Error_Exception::fromException($cause);
+            $this->cause = Exception::fromException($cause);
         }
     }
 
 
     /**
-     * Convert any exception into a SimpleSAML_Error_Exception.
+     * Convert any exception into a \SimpleSAML\Error\Exception.
      *
-     * @param Exception $e The exception.
+     * @param \Exception $e The exception.
      *
-     * @return SimpleSAML_Error_Exception The new exception.
+     * @return Exception The new exception.
      */
-    public static function fromException(Exception $e)
+    public static function fromException(\Exception $e)
     {
-
-        if ($e instanceof SimpleSAML_Error_Exception) {
+        if ($e instanceof Exception) {
             return $e;
         }
-        return new SimpleSAML_Error_UnserializableException($e);
+        return new UnserializableException($e);
     }
 
 
     /**
      * Load the backtrace from the given exception.
      *
-     * @param Exception $exception The exception we should fetch the backtrace from.
+     * @param \Exception $exception The exception we should fetch the backtrace from.
+     * @return void
      */
-    protected function initBacktrace(Exception $exception)
+    protected function initBacktrace(\Exception $exception)
     {
-
-        $this->backtrace = array();
+        $this->backtrace = [];
 
         // position in the top function on the stack
         $pos = $exception->getFile().':'.$exception->getLine();
 
         foreach ($exception->getTrace() as $t) {
-
             $function = $t['function'];
             if (array_key_exists('class', $t)) {
                 $function = $t['class'].'::'.$function;
@@ -120,7 +119,7 @@ class SimpleSAML_Error_Exception extends Exception
     /**
      * Retrieve the cause of this exception.
      *
-     * @return SimpleSAML_Error_Exception|null The cause of this exception.
+     * @return Exception|null The cause of this exception.
      */
     public function getCause()
     {
@@ -150,9 +149,9 @@ class SimpleSAML_Error_Exception extends Exception
      */
     public function format($anonymize = false)
     {
-        $ret = array(
+        $ret = [
             $this->getClass().': '.$this->getMessage(),
-        );
+        ];
         return array_merge($ret, $this->formatBacktrace($anonymize));
     }
 
@@ -168,8 +167,8 @@ class SimpleSAML_Error_Exception extends Exception
      */
     public function formatBacktrace($anonymize = false)
     {
-        $ret = array();
-        $basedir = SimpleSAML_Configuration::getInstance()->getBaseDir();
+        $ret = [];
+        $basedir = \SimpleSAML\Configuration::getInstance()->getBaseDir();
 
         $e = $this;
         do {
@@ -195,29 +194,32 @@ class SimpleSAML_Error_Exception extends Exception
 
     /**
      * Print the backtrace to the log if the 'debug' option is enabled in the configuration.
+     * @param int $level
+     * @return void
      */
     protected function logBacktrace($level = \SimpleSAML\Logger::DEBUG)
     {
         // see if debugging is enabled for backtraces
-        $debug = SimpleSAML_Configuration::getInstance()->getArrayize('debug', array('backtraces' => false));
+        $debug = \SimpleSAML\Configuration::getInstance()->getArrayize('debug', ['backtraces' => false]);
 
         if (!(in_array('backtraces', $debug, true) // implicitly enabled
-              || (array_key_exists('backtraces', $debug) && $debug['backtraces'] === true) // explicitly set
-              // TODO: deprecate the old style and remove it in 2.0
-              || (array_key_exists(0, $debug) && $debug[0] === true) // old style 'debug' configuration option
+            || (array_key_exists('backtraces', $debug) && $debug['backtraces'] === true)
+            // explicitly set
+            // TODO: deprecate the old style and remove it in 2.0
+            || (array_key_exists(0, $debug) && $debug[0] === true) // old style 'debug' configuration option
         )) {
             return;
         }
 
         $backtrace = $this->formatBacktrace();
 
-        $callback = array('\SimpleSAML\Logger');
-        $functions = array(
+        $callback = ['\SimpleSAML\Logger'];
+        $functions = [
             \SimpleSAML\Logger::ERR     => 'error',
             \SimpleSAML\Logger::WARNING => 'warning',
             \SimpleSAML\Logger::INFO    => 'info',
             \SimpleSAML\Logger::DEBUG   => 'debug',
-        );
+        ];
         $callback[] = $functions[$level];
 
         foreach ($backtrace as $line) {
@@ -232,16 +234,17 @@ class SimpleSAML_Error_Exception extends Exception
      * Override to allow errors extending this class to specify the log level themselves.
      *
      * @param int $default_level The log level to use if this method was not overridden.
+     * @return void
      */
     public function log($default_level)
     {
-        $fn = array(
-            SimpleSAML\Logger::ERR     => 'logError',
-            SimpleSAML\Logger::WARNING => 'logWarning',
-            SimpleSAML\Logger::INFO    => 'logInfo',
-            SimpleSAML\Logger::DEBUG   => 'logDebug',
-        );
-        call_user_func(array($this, $fn[$default_level]), $default_level);
+        $fn = [
+            \SimpleSAML\Logger::ERR     => 'logError',
+            \SimpleSAML\Logger::WARNING => 'logWarning',
+            \SimpleSAML\Logger::INFO    => 'logInfo',
+            \SimpleSAML\Logger::DEBUG   => 'logDebug',
+        ];
+        call_user_func([$this, $fn[$default_level]], $default_level);
     }
 
 
@@ -249,10 +252,11 @@ class SimpleSAML_Error_Exception extends Exception
      * Print the exception to the log with log level error.
      *
      * This function will write this exception to the log, including a full backtrace.
+     * @return void
      */
     public function logError()
     {
-        SimpleSAML\Logger::error($this->getClass().': '.$this->getMessage());
+        \SimpleSAML\Logger::error($this->getClass().': '.$this->getMessage());
         $this->logBacktrace(\SimpleSAML\Logger::ERR);
     }
 
@@ -261,10 +265,11 @@ class SimpleSAML_Error_Exception extends Exception
      * Print the exception to the log with log level warning.
      *
      * This function will write this exception to the log, including a full backtrace.
+     * @return void
      */
     public function logWarning()
     {
-        SimpleSAML\Logger::warning($this->getClass().': '.$this->getMessage());
+        \SimpleSAML\Logger::warning($this->getClass().': '.$this->getMessage());
         $this->logBacktrace(\SimpleSAML\Logger::WARNING);
     }
 
@@ -273,10 +278,11 @@ class SimpleSAML_Error_Exception extends Exception
      * Print the exception to the log with log level info.
      *
      * This function will write this exception to the log, including a full backtrace.
+     * @return void
      */
     public function logInfo()
     {
-        SimpleSAML\Logger::info($this->getClass().': '.$this->getMessage());
+        \SimpleSAML\Logger::info($this->getClass().': '.$this->getMessage());
         $this->logBacktrace(\SimpleSAML\Logger::INFO);
     }
 
@@ -285,10 +291,11 @@ class SimpleSAML_Error_Exception extends Exception
      * Print the exception to the log with log level debug.
      *
      * This function will write this exception to the log, including a full backtrace.
+     * @return void
      */
     public function logDebug()
     {
-        SimpleSAML\Logger::debug($this->getClass().': '.$this->getMessage());
+        \SimpleSAML\Logger::debug($this->getClass().': '.$this->getMessage());
         $this->logBacktrace(\SimpleSAML\Logger::DEBUG);
     }
 
@@ -303,7 +310,6 @@ class SimpleSAML_Error_Exception extends Exception
      */
     public function __sleep()
     {
-
         $ret = array_keys((array) $this);
 
         foreach ($ret as $i => $e) {

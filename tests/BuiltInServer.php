@@ -9,6 +9,7 @@
 
 namespace SimpleSAML\Test;
 
+use SimpleSAML\Utils\System;
 
 class BuiltInServer
 {
@@ -61,6 +62,10 @@ class BuiltInServer
         } else {
             $this->docroot = dirname(dirname(__FILE__)).'/www/';
         }
+
+        // Rationalize docroot
+        $this->docroot = str_replace('\\', '/', $this->docroot);
+        $this->docroot = rtrim($this->docroot, '/');
     }
 
 
@@ -81,17 +86,26 @@ class BuiltInServer
         $port = mt_rand(1025, 65535);
         $this->address = 'localhost:'.$port;
 
-        $command = sprintf(
-            'php -S %s -t %s %s >> /dev/null 2>&1 & echo $!',
-            $this->address,
-            $this->docroot,
-            $this->router
-        );
+        if (System::getOS() === System::WINDOWS) {
+            $command = sprintf(
+                'powershell $proc = start-process php -ArgumentList (\'-S %s\', \'-t %s\', \'%s\') -Passthru; Write-output $proc.Id;',
+                $this->address,
+                $this->docroot,
+                $this->router
+            );
+        } else {
+            $command = sprintf(
+                'php -S %s -t %s %s >> /dev/null 2>&1 & echo $!',
+                $this->address,
+                $this->docroot,
+                $this->router
+            );
+        }
 
         // execute the command and store the process ID
-        $output = array();
+        $output = [];
         exec($command, $output);
-        $this->pid = (int) $output[0];
+        $this->pid = intval($output[0]);
 
         // wait until it's listening for connections to avoid race conditions
         $start = microtime(true);
@@ -118,8 +132,11 @@ class BuiltInServer
     {
         if ($this->pid === 0) {
             return;
+        } else if (System::getOS() === System::WINDOWS) {
+            exec('taskkill /PID '.$this->pid);
+        } else {
+            exec('kill '.$this->pid);
         }
-        exec('kill '.$this->pid);
         $this->pid = 0;
     }
 
@@ -170,32 +187,32 @@ class BuiltInServer
      *
      * @return array|string The response obtained from the built-in server.
      */
-    public function get($query, $parameters, $curlopts = array())
+    public function get($query, $parameters, $curlopts = [])
     {
         $ch = curl_init();
         $url = 'http://'.$this->address.$query;
         $url .= (!empty($parameters)) ? '?'.http_build_query($parameters) : '';
-        curl_setopt_array($ch, array(
+        curl_setopt_array($ch, [
             CURLOPT_URL => $url,
             CURLOPT_RETURNTRANSFER => 1,
             CURLOPT_HEADER => 1,
-        ));
+        ]);
         curl_setopt_array($ch, $curlopts);
         $resp = curl_exec($ch);
         $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         list($header, $body) = explode("\r\n\r\n", $resp, 2);
         $raw_headers = explode("\r\n", $header);
         array_shift($raw_headers);
-        $headers = array();
+        $headers = [];
         foreach ($raw_headers as $header) {
             list($name, $value) = explode(':', $header, 2);
             $headers[trim($name)] = trim($value);
         }
         curl_close($ch);
-        return array(
+        return [
             'code' => $code,
             'headers' => $headers,
             'body' => $body,
-        );
+        ];
     }
 }
